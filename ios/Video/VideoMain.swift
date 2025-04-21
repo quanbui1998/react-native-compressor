@@ -102,7 +102,7 @@ class VideoCompressor {
 
     func compressVideo(url: URL, options: [String: Any], onProgress: @escaping (Float) -> Void,  onCompletion: @escaping (URL) -> Void, onFailure: @escaping (CompressionError) -> Void){
         let uuid:String = options["uuid"] as! String
-         let queue = DispatchQueue(label: "ImageCompressQueue")
+         let queue = DispatchQueue(label: "VideoCompressQueue")
         queue.async {
             VideoCompressor.getAbsoluteVideoPath(url.absoluteString, options: options, onCompletion: { absoluteVideoPath in
                 queue.async {
