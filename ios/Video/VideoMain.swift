@@ -100,52 +100,117 @@ class VideoCompressor {
     }
 
 
-  func compressVideo(url: URL, options: [String: Any], onProgress: @escaping (Float) -> Void,  onCompletion: @escaping (URL) -> Void, onFailure: @escaping (Error) -> Void){
-      let uuid:String = options["uuid"] as! String
+    func compressVideo(url: URL, options: [String: Any], onProgress: @escaping (Float) -> Void,  onCompletion: @escaping (URL) -> Void, onFailure: @escaping (CompressionError) -> Void){
+        let uuid:String = options["uuid"] as! String
+         let queue = DispatchQueue(label: "ImageCompressQueue")
+        queue.async {
+            VideoCompressor.getAbsoluteVideoPath(url.absoluteString, options: options, onCompletion: { absoluteVideoPath in
+                queue.async {
+                    var minimumFileSizeForCompress:Double=0.0;
+                    let videoURL = URL(string: absoluteVideoPath)
+                    let fileSize=self.getfileSize(forURL: videoURL!);
+                    if((options["minimumFileSizeForCompress"]) != nil)
+                    {
+                        minimumFileSizeForCompress=options["minimumFileSizeForCompress"] as! Double;
+                    }
+                    if(fileSize>minimumFileSizeForCompress)
+                    {
+                        if(options["compressionMethod"] as! String=="auto")
+                        {
+                            self.autoCompressionHelper(url: videoURL!, options:options) { progress in
+                                DispatchQueue.main.async {
+                                    onProgress(progress)
+                                }
+                            } onCompletion: { outputURL in
+                                MediaCache.removeCompletedImagePath(absoluteVideoPath);
+                                DispatchQueue.main.async {
+                                    onCompletion(outputURL)
+                                }
+                            } onFailure: { error in
+                                DispatchQueue.main.async {
+                                    onFailure(error)
+                                }
+                            }
+                        }
+                        else
+                        {
+                            var tempVideoURL = videoURL!
+                            do {
+                                guard let itemProvider = NSItemProvider(contentsOf: videoURL!) else {
+                                    let error = CompressionError(message: "Failed to create NSItemProvider from URL")
+                                    DispatchQueue.main.async {
+                                        onFailure(error)
+                                    }
+                                    return
+                                }
+                                
+                                if self.isVideoNeedingRelocation(itemProvider: itemProvider, itemUrl: videoURL!) {
+                                    tempVideoURL = try Utils.copyToVideoTempDir(url: videoURL!)
+                                }
+                            } catch {
+                                let error = CompressionError(message: "Could not copy video")
+                                DispatchQueue.main.async {
+                                    onFailure(error)
+                                }
+                                return
+                            }
 
-      VideoCompressor.getAbsoluteVideoPath(url.absoluteString, options: options) { absoluteVideoPath in
-        var minimumFileSizeForCompress:Double=0.0;
-          let videoURL = URL(string: absoluteVideoPath)
-        let fileSize=self.getfileSize(forURL: videoURL!);
-          if((options["minimumFileSizeForCompress"]) != nil)
-        {0
-              minimumFileSizeForCompress=options["minimumFileSizeForCompress"] as! Double;
-        }
-        if(fileSize>minimumFileSizeForCompress)
-        {
-            if(options["compressionMethod"] as! String=="auto")
-            {
-                self.autoCompressionHelper(url: videoURL!, options:options) { progress in
-                    onProgress(progress)
-                } onCompletion: { outputURL in
-                    MediaCache.removeCompletedImagePath(absoluteVideoPath);
-                    onCompletion(outputURL)
-                } onFailure: { error in
+                            self.manualCompressionHelper(url: tempVideoURL, options:options) { progress in
+                                DispatchQueue.main.async {
+                                    onProgress(progress)
+                                }
+                            } onCompletion: { outputURL in
+                                // Remove the temporary file if it was created
+                                if tempVideoURL != videoURL! {
+                                    try? FileManager.default.removeItem(at: tempVideoURL)
+                                }
+                                MediaCache.removeCompletedImagePath(absoluteVideoPath);
+                                DispatchQueue.main.async {
+                                    onCompletion(outputURL)
+                                }
+                            } onFailure: { error in
+                                DispatchQueue.main.async {
+                                    onFailure(error)
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        DispatchQueue.main.async {
+                            onCompletion(url)
+                        }
+                    }
+                }
+            }, onFailure: { error in
+                DispatchQueue.main.async {
                     onFailure(error)
                 }
-            }
-            else
-            {
-                self.manualCompressionHelper(url: videoURL!, options:options) { progress in
-                    onProgress(progress)
-                } onCompletion: { outputURL in
-                    MediaCache.removeCompletedImagePath(absoluteVideoPath);
-                    onCompletion(outputURL)
-                } onFailure: { error in
-                    onFailure(error)
-                }
-            }
-
-
-
+            })
         }
-        else
-        {
-            onCompletion(url)
-        }
-      }
-}
+    }
 
+    func isVideoNeedingRelocation(itemProvider: NSItemProvider, itemUrl: URL) -> Bool {
+        let pathExtension = itemUrl.pathExtension
+        guard pathExtension.count > 0 else {
+            // Logger.verbose("item URL has no file extension: \(itemUrl).")
+            return false
+        }
+        guard let utiTypeForURL = Utils.utiType(forFileExtension: pathExtension) else {
+            // Logger.verbose("item has unknown UTI type: \(itemUrl).")
+            return false
+        }
+        // Logger.verbose("utiTypeForURL: \(utiTypeForURL)")
+        guard utiTypeForURL == kUTTypeMPEG4 as String else {
+            // Either it's not a video or it was a video which was not auto-converted to mp4.
+            // Not affected by the issue.
+            return false
+        }
+
+        // If video file already existed on disk as an mp4, then the host app didn't need to
+        // apply any conversion, so no need to relocate the file.
+        return !itemProvider.registeredTypeIdentifiers.contains(kUTTypeMPEG4 as String)
+    }
 
     func  makeVideoBitrate(originalHeight:Int,originalWidth:Int,originalBitrate:Int,height:Int,width:Int)->Int {
         let compressFactor:Float = 0.8
