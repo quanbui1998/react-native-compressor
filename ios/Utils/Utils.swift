@@ -6,6 +6,8 @@
 //
 
 import Foundation
+import UniformTypeIdentifiers
+import MobileCoreServices
 
 class Utils {
     static func generateCacheFilePath(_ extension: String) -> String {
@@ -146,5 +148,24 @@ class Utils {
         }
         return path
     }
-    
+
+    static func utiType(forFileExtension fileExtension: String) -> String? {
+        if #available(iOS 14.0, *) {
+            // iOS 14+ sử dụng `UTType`
+            return UTType(filenameExtension: fileExtension)?.identifier
+        } else {
+            // Các phiên bản iOS cũ hơn sử dụng `UTTypeCreatePreferredIdentifierForTag`
+            let ext = fileExtension as CFString
+            let uti = UTTypeCreatePreferredIdentifierForTag(kUTTagClassFilenameExtension, ext, nil)?.takeRetainedValue()
+            return uti as String?
+        }
+    }
+
+    static func copyToVideoTempDir(url: URL) throws -> URL {
+        let tempPath = (NSTemporaryDirectory() as NSString)
+        .appendingPathComponent(UUID().uuidString + ".mp4")
+        let tempURL = URL(string: tempPath)!
+        try FileManager.default.copyItem(at: url, to: tempURL)
+        return tempURL
+    }
 }
